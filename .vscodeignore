@@ -1,0 +1,11 @@
+.vscode/**
+src/**
+node_modules/**
+.claude/**
+*.ts
+!out/**
+tsconfig.json
+prompt.md
+*.png
+hello-world-extension/**
+logcat-*.vsix

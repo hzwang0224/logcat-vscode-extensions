@@ -1,0 +1,87 @@
+{
+  "name": "logcat",
+  "displayName": "Logcat",
+  "description": "Android Logcat viewer for VSCode",
+  "version": "0.0.1",
+  "publisher": "wanghanzhang",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onView:logcat-devices",
+    "onCommand:logcat.openPanel",
+    "onCommand:logcat.refreshDevices"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "logcat-sidebar",
+          "title": "Logcat",
+          "icon": "resources/logcat-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "logcat-sidebar": [
+        {
+          "id": "logcat-devices",
+          "name": "Devices"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "logcat.openPanel",
+        "title": "Open Logcat",
+        "icon": "$(device-mobile)"
+      },
+      {
+        "command": "logcat.refreshDevices",
+        "title": "Refresh Devices",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "logcat.openPanel",
+          "when": "view == logcat-devices",
+          "group": "navigation"
+        },
+        {
+          "command": "logcat.refreshDevices",
+          "when": "view == logcat-devices",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Logcat",
+      "properties": {
+        "logcat.adbPath": {
+          "type": "string",
+          "default": "adb",
+          "description": "Path to the adb executable"
+        },
+        "logcat.maxLogLines": {
+          "type": "number",
+          "default": 10000,
+          "description": "Maximum number of log lines to keep in the viewer"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}
