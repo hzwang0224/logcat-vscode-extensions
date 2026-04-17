@@ -8,11 +8,6 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "activationEvents": [
-    "onView:logcat-devices",
-    "onCommand:logcat.openPanel",
-    "onCommand:logcat.refreshDevices"
-  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -28,7 +23,8 @@
       "logcat-sidebar": [
         {
           "id": "logcat-devices",
-          "name": "Devices"
+          "name": "Devices",
+          "icon": "resources/logcat-icon.svg"
         }
       ]
     },
@@ -46,11 +42,6 @@
     ],
     "menus": {
       "view/title": [
-        {
-          "command": "logcat.openPanel",
-          "when": "view == logcat-devices",
-          "group": "navigation"
-        },
         {
           "command": "logcat.refreshDevices",
           "when": "view == logcat-devices",

@@ -42,22 +42,6 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             flex-shrink: 0;
             font-size: var(--ui-size);
         }
-        #device-select {
-            height: 22px;
-            padding: 0 4px;
-            background: var(--vscode-dropdown-background);
-            color: var(--vscode-dropdown-foreground);
-            border: 1px solid var(--vscode-dropdown-border, transparent);
-            border-radius: 2px;
-            font-family: var(--ui-font);
-            font-size: var(--ui-size);
-            min-width: 180px;
-            max-width: 320px;
-            outline: none;
-        }
-        #device-select:focus {
-            border-color: var(--vscode-focusBorder);
-        }
         #filter-input {
             flex: 1;
             height: 22px;
@@ -187,17 +171,60 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             font-size: 11px;
             flex-shrink: 0;
         }
+
+        /* ---------- Search bar ---------- */
+        #search-bar {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 6px;
+            background: var(--vscode-sideBar-background);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            flex-shrink: 0;
+            font-size: var(--ui-size);
+        }
+        #search-input {
+            flex: 1;
+            max-width: 300px;
+            height: 22px;
+            padding: 0 6px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border, transparent);
+            border-radius: 2px;
+            font-family: var(--ui-font);
+            font-size: var(--ui-size);
+            outline: none;
+        }
+        #search-input:focus { border-color: var(--vscode-focusBorder); }
+        #search-count {
+            color: var(--vscode-descriptionForeground);
+            font-size: var(--ui-size);
+            white-space: nowrap;
+            min-width: 60px;
+        }
+        mark.search-hl {
+            background: var(--vscode-editor-findMatchHighlightBackground, rgba(255,215,0,0.4));
+            color: inherit;
+            border-radius: 1px;
+        }
+        .search-focused mark.search-hl {
+            background: var(--vscode-editor-findMatchBackground, rgba(255,140,0,0.7));
+        }
+
+        /* ---------- Word wrap ---------- */
+        body.word-wrap #log-container { overflow-x: hidden; }
+        body.word-wrap .log-row { white-space: normal; }
+        body.word-wrap .col-tag { text-overflow: unset; overflow: visible; }
+        body.word-wrap .col-msg { white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; }
     </style>
 </head>
 <body>
     <div id="toolbar">
-        <select id="device-select" title="Device">
-            <option value="">-- Select Device --</option>
-        </select>
         <input id="filter-input" type="text" placeholder="Filter (text, level:W, tag:MyApp, pid:1234)" />
         <button class="toolbar-btn" id="btn-clear" title="Clear logs">Clear</button>
         <button class="toolbar-btn" id="btn-pause" title="Pause streaming">Pause</button>
-        <button class="toolbar-btn" id="btn-refresh" title="Refresh device list">Refresh</button>
+        <button class="toolbar-btn" id="btn-wrap" title="Toggle word wrap">Wrap</button>
         <div class="popup-wrapper">
             <button class="toolbar-btn" id="btn-format" title="Column visibility">Format <span>\u25BE</span></button>
             <div id="format-menu" class="popup-menu hidden">
@@ -207,6 +234,13 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
                 <label><input type="checkbox" data-col="level" checked>Level</label>
             </div>
         </div>
+    </div>
+    <div id="search-bar" class="hidden">
+        <button class="toolbar-btn" id="btn-search-prev" title="Previous match (Shift+Enter)">&#8593;</button>
+        <button class="toolbar-btn" id="btn-search-next" title="Next match (Enter)">&#8595;</button>
+        <input id="search-input" type="text" placeholder="Find in logs…" />
+        <span id="search-count"></span>
+        <button class="toolbar-btn" id="btn-search-close" title="Close (Escape)">&#10005;</button>
     </div>
     <div id="log-container">
         <div id="log-table"></div>
@@ -222,13 +256,18 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
         const MAX_LINES = ${maxLogLines};
         const TRIM_AMOUNT = Math.floor(MAX_LINES * 0.2);
 
-        const deviceSelect = document.getElementById('device-select');
         const filterInput = document.getElementById('filter-input');
         const btnClear = document.getElementById('btn-clear');
         const btnPause = document.getElementById('btn-pause');
-        const btnRefresh = document.getElementById('btn-refresh');
+        const btnWrap = document.getElementById('btn-wrap');
         const btnFormat = document.getElementById('btn-format');
         const formatMenu = document.getElementById('format-menu');
+        const searchBar = document.getElementById('search-bar');
+        const searchInput = document.getElementById('search-input');
+        const searchCount = document.getElementById('search-count');
+        const btnSearchPrev = document.getElementById('btn-search-prev');
+        const btnSearchNext = document.getElementById('btn-search-next');
+        const btnSearchClose = document.getElementById('btn-search-close');
         const logTable = document.getElementById('log-table');
         const logContainer = document.getElementById('log-container');
         const lineCountEl = document.getElementById('line-count');
@@ -239,20 +278,14 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
         let filterText = '';
         let filterTerms = [];
         let autoScroll = true;
+        let searchText = '';
+        let searchMatches = [];
+        let searchIndex = -1;
 
         // ----- Auto-scroll detection -----
         logContainer.addEventListener('scroll', () => {
             const threshold = 50;
             autoScroll = (logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight) < threshold;
-        });
-
-        // ----- Device selection -----
-        deviceSelect.addEventListener('change', () => {
-            const serial = deviceSelect.value;
-            if (serial) {
-                vscode.postMessage({ type: 'selectDevice', serial });
-                statusTextEl.textContent = 'Connecting...';
-            }
         });
 
         // ----- Filter (debounced) -----
@@ -279,11 +312,6 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             btnPause.textContent = paused ? 'Resume' : 'Pause';
             btnPause.classList.toggle('active', paused);
             vscode.postMessage({ type: paused ? 'pause' : 'resume' });
-        });
-
-        btnRefresh.addEventListener('click', () => {
-            vscode.postMessage({ type: 'refreshDevices' });
-            statusTextEl.textContent = 'Refreshing...';
         });
 
         // ----- Format popup menu -----
@@ -328,6 +356,32 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
                 );
                 row.classList.toggle('hidden', !visible);
             }
+            if (searchText) { rebuildSearchMatches(); }
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function escapeRegex(str) {
+            return str.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+        }
+
+        function renderRowContent(row, hl) {
+            function buildSpan(orig) {
+                if (!hl) return escapeHtml(orig);
+                const parts = orig.split(new RegExp('(' + escapeRegex(hl) + ')', 'gi'));
+                return parts.map(p => p.toLowerCase() === hl.toLowerCase()
+                    ? '<mark class="search-hl">' + escapeHtml(p) + '</mark>'
+                    : escapeHtml(p)
+                ).join('');
+            }
+            row.innerHTML =
+                '<span class="col-time">' + buildSpan(row.dataset.origTime || '') + '</span>' +
+                '<span class="col-pid">'  + buildSpan(row.dataset.origPid  || '') + '</span>' +
+                '<span class="col-tag">'  + buildSpan(row.dataset.origTag  || '') + '</span>' +
+                '<span class="col-level">'+ buildSpan(row.dataset.origLevel|| '') + '</span>' +
+                '<span class="col-msg">'  + buildSpan(row.dataset.origMsg  || '') + '</span>';
         }
 
         function createRow(entry) {
@@ -337,65 +391,162 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             row.dataset.level = entry.level.toLowerCase();
             row.dataset.tag = entry.tag.toLowerCase();
             row.dataset.pid = entry.pid;
-
-            row.innerHTML =
-                '<span class="col-time">' + escapeHtml(entry.date + ' ' + entry.time) + '</span>' +
-                '<span class="col-pid">' + escapeHtml(entry.pid + '-' + entry.tid) + '</span>' +
-                '<span class="col-tag">' + escapeHtml(entry.tag) + '</span>' +
-                '<span class="col-level">' + escapeHtml(entry.level) + '</span>' +
-                '<span class="col-msg">' + escapeHtml(entry.message) + '</span>';
-
+            row.dataset.origTime  = entry.date + ' ' + entry.time;
+            row.dataset.origPid   = entry.pid + '-' + entry.tid;
+            row.dataset.origTag   = entry.tag;
+            row.dataset.origLevel = entry.level;
+            row.dataset.origMsg   = entry.message;
+            renderRowContent(row, searchText);
             if (!matchesFilter(row.dataset.text, row.dataset.level, row.dataset.tag, row.dataset.pid)) {
                 row.classList.add('hidden');
             }
             return row;
         }
 
-        function escapeHtml(str) {
-            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        }
-
         function trimOldRows() {
             if (totalLines > MAX_LINES) {
-                const removeCount = TRIM_AMOUNT;
-                for (let i = 0; i < removeCount && logTable.firstChild; i++) {
+                for (let i = 0; i < TRIM_AMOUNT && logTable.firstChild; i++) {
                     logTable.removeChild(logTable.firstChild);
                 }
-                totalLines -= removeCount;
+                totalLines -= TRIM_AMOUNT;
+                if (searchText) { rebuildSearchMatches(); }
             }
         }
+
+        // ----- Search helpers -----
+        function rebuildSearchMatches() {
+            const focused = searchIndex >= 0 && searchIndex < searchMatches.length ? searchMatches[searchIndex] : null;
+            searchMatches = [];
+            const rows = logTable.children;
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                if (!row.classList.contains('hidden') && row.dataset.text.includes(searchText.toLowerCase())) {
+                    searchMatches.push(row);
+                }
+            }
+            if (focused && searchMatches.includes(focused)) {
+                searchIndex = searchMatches.indexOf(focused);
+            } else {
+                searchIndex = searchMatches.length > 0 ? 0 : -1;
+                if (searchIndex === 0) { searchMatches[0].classList.add('search-focused'); }
+            }
+            searchCount.textContent = searchMatches.length > 0
+                ? (searchIndex + 1) + ' / ' + searchMatches.length
+                : (searchText ? 'No results' : '');
+        }
+
+        function updateSearch(text) {
+            searchText = text;
+            if (searchIndex >= 0 && searchIndex < searchMatches.length) {
+                searchMatches[searchIndex].classList.remove('search-focused');
+            }
+            searchMatches = [];
+            searchIndex = -1;
+            const rows = logTable.children;
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                row.classList.remove('search-focused');
+                renderRowContent(row, text);
+                if (text && !row.classList.contains('hidden') && row.dataset.text.includes(text.toLowerCase())) {
+                    searchMatches.push(row);
+                }
+            }
+            if (searchMatches.length > 0) { navigateTo(0); }
+            else { searchCount.textContent = text ? 'No results' : ''; }
+        }
+
+        function navigateTo(index) {
+            if (searchMatches.length === 0) return;
+            if (searchIndex >= 0 && searchIndex < searchMatches.length) {
+                searchMatches[searchIndex].classList.remove('search-focused');
+            }
+            searchIndex = ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
+            searchMatches[searchIndex].classList.add('search-focused');
+            searchMatches[searchIndex].scrollIntoView({ block: 'nearest' });
+            searchCount.textContent = (searchIndex + 1) + ' / ' + searchMatches.length;
+        }
+
+        function openSearch() {
+            searchBar.classList.remove('hidden');
+            searchInput.focus();
+            searchInput.select();
+        }
+
+        function closeSearch() {
+            searchBar.classList.add('hidden');
+            const prevText = searchText;
+            searchText = '';
+            searchMatches = [];
+            searchIndex = -1;
+            searchInput.value = '';
+            searchCount.textContent = '';
+            if (prevText) {
+                const rows = logTable.children;
+                for (let i = 0; i < rows.length; i++) {
+                    rows[i].classList.remove('search-focused');
+                    renderRowContent(rows[i], '');
+                }
+            }
+        }
+
+        // ----- Word wrap -----
+        btnWrap.addEventListener('click', () => {
+            document.body.classList.toggle('word-wrap');
+            btnWrap.classList.toggle('active', document.body.classList.contains('word-wrap'));
+        });
+
+        // ----- Ctrl+F / Escape -----
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                openSearch();
+            } else if (e.key === 'Escape' && !searchBar.classList.contains('hidden')) {
+                closeSearch();
+            }
+        });
+
+        // ----- Search bar events -----
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) { navigateTo(searchIndex - 1); }
+                else { navigateTo(searchIndex + 1); }
+            } else if (e.key === 'Escape') {
+                closeSearch();
+            }
+        });
+        let searchTimeout;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => updateSearch(searchInput.value), 150);
+        });
+        btnSearchPrev.addEventListener('click', () => navigateTo(searchIndex - 1));
+        btnSearchNext.addEventListener('click', () => navigateTo(searchIndex + 1));
+        btnSearchClose.addEventListener('click', closeSearch);
 
         // ----- Messages from extension -----
         window.addEventListener('message', (event) => {
             const msg = event.data;
             switch (msg.type) {
-                case 'setDevices': {
-                    const current = deviceSelect.value;
-                    deviceSelect.innerHTML = '<option value="">-- Select Device --</option>';
-                    msg.devices.forEach(d => {
-                        const opt = document.createElement('option');
-                        opt.value = d.serial;
-                        const label = d.state === 'device'
-                            ? d.model + ' (' + d.serial + ')'
-                            : d.model + ' (' + d.serial + ') [' + d.state + ']';
-                        opt.textContent = label;
-                        deviceSelect.appendChild(opt);
-                    });
-                    // Restore selection if still present
-                    if (current && msg.devices.some(d => d.serial === current)) {
-                        deviceSelect.value = current;
-                    }
-                    break;
-                }
                 case 'addLogs': {
                     const fragment = document.createDocumentFragment();
+                    const newMatchRows = [];
                     msg.entries.forEach(entry => {
-                        fragment.appendChild(createRow(entry));
+                        const row = createRow(entry);
+                        fragment.appendChild(row);
+                        if (searchText && !row.classList.contains('hidden') && row.dataset.text.includes(searchText.toLowerCase())) {
+                            newMatchRows.push(row);
+                        }
                     });
                     logTable.appendChild(fragment);
                     totalLines += msg.entries.length;
                     trimOldRows();
                     lineCountEl.textContent = totalLines + ' lines';
+                    if (newMatchRows.length > 0) {
+                        searchMatches.push(...newMatchRows);
+                        if (searchIndex === -1) { searchIndex = 0; searchMatches[0].classList.add('search-focused'); }
+                        searchCount.textContent = (searchIndex + 1) + ' / ' + searchMatches.length;
+                    }
                     if (autoScroll) {
                         logContainer.scrollTop = logContainer.scrollHeight;
                     }
@@ -405,14 +556,13 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
                     logTable.innerHTML = '';
                     totalLines = 0;
                     lineCountEl.textContent = '0 lines';
+                    searchMatches = [];
+                    searchIndex = -1;
+                    if (searchText) { searchCount.textContent = 'No results'; }
                     break;
                 }
                 case 'status': {
                     statusTextEl.textContent = msg.text;
-                    break;
-                }
-                case 'selectDevice': {
-                    deviceSelect.value = msg.serial;
                     break;
                 }
             }
