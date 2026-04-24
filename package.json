@@ -2,7 +2,7 @@
   "name": "logcat",
   "displayName": "Logcat",
   "description": "Android Logcat viewer for VSCode",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "publisher": "wanghanzhang",
   "engines": {
     "vscode": "^1.85.0"
@@ -15,7 +15,7 @@
         {
           "id": "logcat-sidebar",
           "title": "Logcat",
-          "icon": "resources/logcat-icon.svg"
+          "icon": "resources/phone-icon.svg"
         }
       ]
     },
@@ -24,7 +24,7 @@
         {
           "id": "logcat-devices",
           "name": "Devices",
-          "icon": "resources/logcat-icon.svg"
+          "icon": "resources/phone-icon.svg"
         }
       ]
     },

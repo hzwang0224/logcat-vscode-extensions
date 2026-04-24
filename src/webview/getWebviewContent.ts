@@ -42,11 +42,16 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             flex-shrink: 0;
             font-size: var(--ui-size);
         }
-        #filter-input {
+        #filter-history-wrapper {
+            position: relative;
             flex: 1;
+            min-width: 140px;
+        }
+        #filter-input {
+            width: 100%;
             height: 22px;
-            min-width: 100px;
-            padding: 0 6px;
+            min-width: 140px;
+            padding: 0 30px 0 6px;
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
             border: 1px solid var(--vscode-input-border, transparent);
@@ -60,6 +65,104 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
         }
         #filter-input::placeholder {
             color: var(--vscode-input-placeholderForeground);
+        }
+        #btn-filter-history {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 24px;
+            padding: 0;
+            justify-content: center;
+            border-left-color: var(--vscode-panel-border);
+        }
+        #filter-history-menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            width: fit-content;
+            min-width: 220px;
+            max-width: min(360px, 100%);
+            background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+            color: var(--vscode-menu-foreground, var(--vscode-foreground));
+            border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border));
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.28);
+            z-index: 120;
+            overflow: hidden;
+        }
+        .history-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            padding: 2px 6px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            background: var(--vscode-sideBar-background);
+        }
+        .history-title {
+            font-size: var(--ui-size);
+            color: var(--vscode-descriptionForeground);
+            text-transform: uppercase;
+            letter-spacing: 0;
+            line-height: 1;
+        }
+        .history-save-btn {
+            height: 18px;
+            padding: 0 6px;
+            font-size: 11px;
+        }
+        .history-save-btn:disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+        #filter-history-list {
+            max-height: 220px;
+            overflow-y: auto;
+            padding: 2px;
+        }
+        .history-empty {
+            padding: 10px 8px;
+            color: var(--vscode-descriptionForeground);
+        }
+        .history-item {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            width: 100%;
+        }
+        .history-entry-btn {
+            flex: 0 1 auto;
+            min-width: 0;
+            max-width: 280px;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            text-align: left;
+            cursor: pointer;
+            padding: 3px 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .history-delete-btn {
+            width: 20px;
+            height: 20px;
+            border: 0;
+            background: transparent;
+            color: var(--vscode-descriptionForeground);
+            border-radius: 3px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .history-entry-btn:hover,
+        .history-delete-btn:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+        .history-entry-btn:focus,
+        .history-delete-btn:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+            outline-offset: -1px;
         }
         .toolbar-btn {
             height: 22px;
@@ -221,17 +324,27 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
 </head>
 <body>
     <div id="toolbar">
-        <input id="filter-input" type="text" placeholder="Filter (text, level:W, tag:MyApp, pid:1234)" />
+        <div id="filter-history-wrapper">
+            <input id="filter-input" type="text" placeholder="Filter (text, level:W, tag:MyApp, pid:1234)" />
+            <button class="toolbar-btn" id="btn-filter-history" title="Filter history">&#9662;</button>
+            <div id="filter-history-menu" class="hidden">
+                <div class="history-toolbar">
+                    <span class="history-title">Filter History</span>
+                    <button class="toolbar-btn history-save-btn" id="btn-filter-history-add" title="Save current filter">Save Current</button>
+                </div>
+                <div id="filter-history-list"></div>
+            </div>
+        </div>
         <button class="toolbar-btn" id="btn-clear" title="Clear logs">Clear</button>
         <button class="toolbar-btn" id="btn-pause" title="Pause streaming">Pause</button>
         <button class="toolbar-btn" id="btn-wrap" title="Toggle word wrap">Wrap</button>
         <div class="popup-wrapper">
             <button class="toolbar-btn" id="btn-format" title="Column visibility">Format <span>\u25BE</span></button>
             <div id="format-menu" class="popup-menu hidden">
-                <label><input type="checkbox" data-col="time" checked>Timestamp</label>
-                <label><input type="checkbox" data-col="pid" checked>PID-TID</label>
-                <label><input type="checkbox" data-col="tag" checked>Tag</label>
-                <label><input type="checkbox" data-col="level" checked>Level</label>
+                <label><input type="checkbox" data-col="time">Timestamp</label>
+                <label><input type="checkbox" data-col="pid">PID-TID</label>
+                <label><input type="checkbox" data-col="tag">Tag</label>
+                <label><input type="checkbox" data-col="level">Level</label>
             </div>
         </div>
     </div>
@@ -256,7 +369,12 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
         const MAX_LINES = ${maxLogLines};
         const TRIM_AMOUNT = Math.floor(MAX_LINES * 0.2);
 
+        const filterHistoryWrapper = document.getElementById('filter-history-wrapper');
         const filterInput = document.getElementById('filter-input');
+        const btnFilterHistory = document.getElementById('btn-filter-history');
+        const filterHistoryMenu = document.getElementById('filter-history-menu');
+        const filterHistoryList = document.getElementById('filter-history-list');
+        const btnFilterHistoryAdd = document.getElementById('btn-filter-history-add');
         const btnClear = document.getElementById('btn-clear');
         const btnPause = document.getElementById('btn-pause');
         const btnWrap = document.getElementById('btn-wrap');
@@ -281,6 +399,7 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
         let searchText = '';
         let searchMatches = [];
         let searchIndex = -1;
+        let filterHistoryItems = [];
 
         // ----- Auto-scroll detection -----
         logContainer.addEventListener('scroll', () => {
@@ -288,15 +407,78 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             autoScroll = (logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight) < threshold;
         });
 
-        // ----- Filter (debounced) -----
+        // ----- Filter input -----
+        function syncFilterFromInput() {
+            filterText = filterInput.value.toLowerCase();
+            filterTerms = filterText.split(/\s+/).filter(Boolean);
+            applyFilterToAll();
+            updateFilterHistoryActions();
+        }
+
+        function applyFilterValue(value) {
+            filterInput.value = value;
+            syncFilterFromInput();
+        }
+
+        function setHistoryMenuVisible(visible) {
+            filterHistoryMenu.classList.toggle('hidden', !visible);
+            btnFilterHistory.classList.toggle('active', visible);
+        }
+
+        function updateFilterHistoryActions() {
+            btnFilterHistoryAdd.disabled = filterInput.value.trim().length === 0;
+        }
+
+        function renderFilterHistory() {
+            filterHistoryList.innerHTML = '';
+            if (filterHistoryItems.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'history-empty';
+                empty.textContent = 'No saved filters';
+                filterHistoryList.appendChild(empty);
+                return;
+            }
+
+            filterHistoryItems.forEach((item) => {
+                const row = document.createElement('div');
+                row.className = 'history-item';
+
+                const entryButton = document.createElement('button');
+                entryButton.className = 'history-entry-btn';
+                entryButton.type = 'button';
+                entryButton.title = item;
+                entryButton.textContent = item;
+                entryButton.addEventListener('click', () => {
+                    applyFilterValue(item);
+                    setHistoryMenuVisible(false);
+                    filterInput.focus();
+                });
+
+                const deleteButton = document.createElement('button');
+                deleteButton.className = 'history-delete-btn';
+                deleteButton.type = 'button';
+                deleteButton.title = 'Delete';
+                deleteButton.textContent = '×';
+                deleteButton.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    vscode.postMessage({ type: 'deleteFilterHistoryItem', value: item });
+                });
+
+                row.appendChild(deleteButton);
+                row.appendChild(entryButton);
+                filterHistoryList.appendChild(row);
+            });
+        }
+
         let filterTimeout;
         filterInput.addEventListener('input', () => {
             clearTimeout(filterTimeout);
             filterTimeout = setTimeout(() => {
-                filterText = filterInput.value.toLowerCase();
-                filterTerms = filterText.split(/\\s+/).filter(Boolean);
-                applyFilterToAll();
+                syncFilterFromInput();
             }, 200);
+        });
+        filterInput.addEventListener('focus', () => {
+            setHistoryMenuVisible(false);
         });
 
         // ----- Toolbar buttons -----
@@ -314,6 +496,18 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             vscode.postMessage({ type: paused ? 'pause' : 'resume' });
         });
 
+        btnFilterHistory.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setHistoryMenuVisible(filterHistoryMenu.classList.contains('hidden'));
+        });
+        btnFilterHistoryAdd.addEventListener('click', () => {
+            const value = filterInput.value.trim();
+            if (!value) {
+                return;
+            }
+            vscode.postMessage({ type: 'saveFilterHistoryItem', value });
+        });
+
         // ----- Format popup menu -----
         btnFormat.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -321,17 +515,28 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
             btnFormat.classList.toggle('active', !formatMenu.classList.contains('hidden'));
         });
         document.addEventListener('click', (e) => {
+            if (!filterHistoryMenu.classList.contains('hidden') && !filterHistoryWrapper.contains(e.target)) {
+                setHistoryMenuVisible(false);
+            }
             if (!formatMenu.classList.contains('hidden') && !formatMenu.contains(e.target) && e.target !== btnFormat) {
                 formatMenu.classList.add('hidden');
                 btnFormat.classList.remove('active');
             }
         });
-        formatMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-            cb.addEventListener('change', () => {
+        function syncFormatMenuToColumnVisibility() {
+            formatMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
                 const col = cb.dataset.col;
                 document.body.classList.toggle('hide-' + col, !cb.checked);
             });
+        }
+
+        formatMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', () => {
+                syncFormatMenuToColumnVisibility();
+            });
         });
+        // Keep checkbox state and initial column visibility strictly bound.
+        syncFormatMenuToColumnVisibility();
 
         // ----- Filter logic -----
         function matchesFilter(text, level, tag, pid) {
@@ -565,10 +770,17 @@ export function getWebviewContent(webview: vscode.Webview, maxLogLines: number):
                     statusTextEl.textContent = msg.text;
                     break;
                 }
+                case 'setFilterHistory': {
+                    filterHistoryItems = Array.isArray(msg.items) ? msg.items : [];
+                    renderFilterHistory();
+                    updateFilterHistoryActions();
+                    break;
+                }
             }
         });
 
         // ----- Ready signal -----
+        updateFilterHistoryActions();
         vscode.postMessage({ type: 'ready' });
     })();
     </script>

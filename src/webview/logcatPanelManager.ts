@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import * as readline from 'readline';
 import { ChildProcess } from 'child_process';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import * as path from 'path';
 import { AdbClient } from '../adb/adbClient';
 import { parseLogLine } from '../adb/logParser';
 import { Device, LogEntry } from '../types';
 import { getWebviewContent } from './getWebviewContent';
 
 export class LogcatPanelManager implements vscode.Disposable {
+    private static readonly maxFilterHistoryItems = 30;
     private panel: vscode.WebviewPanel | undefined;
     private logcatProcess: ChildProcess | undefined;
     private logBuffer: LogEntry[] = [];
@@ -15,6 +18,8 @@ export class LogcatPanelManager implements vscode.Disposable {
     private pauseBuffer: LogEntry[] = [];
     private currentSerial: string | undefined;
     private pendingSerial: string | undefined;
+    private filterHistory: string[] = [];
+    private filterHistoryLoaded = false;
 
     constructor(
         private context: vscode.ExtensionContext,
@@ -62,15 +67,31 @@ export class LogcatPanelManager implements vscode.Disposable {
         }
     }
 
-    private async handleWebviewMessage(msg: { type: string; serial?: string }): Promise<void> {
+    private async handleWebviewMessage(msg: { type: string; serial?: string; value?: string }): Promise<void> {
         switch (msg.type) {
             case 'ready':
+                await this.ensureFilterHistoryLoaded();
+                this.postFilterHistory();
                 await this.refreshAndMaybeReconnect(this.pendingSerial);
                 this.pendingSerial = undefined;
+                break;
+            case 'requestFilterHistory':
+                await this.ensureFilterHistoryLoaded();
+                this.postFilterHistory();
                 break;
             case 'selectDevice':
                 if (msg.serial) {
                     await this.connectDevice(msg.serial);
+                }
+                break;
+            case 'saveFilterHistoryItem':
+                if (msg.value) {
+                    await this.saveFilterHistoryItem(msg.value);
+                }
+                break;
+            case 'deleteFilterHistoryItem':
+                if (msg.value) {
+                    await this.deleteFilterHistoryItem(msg.value);
                 }
                 break;
             case 'clearLogs':
@@ -96,6 +117,72 @@ export class LogcatPanelManager implements vscode.Disposable {
                 await this.refreshAndMaybeReconnect();
                 break;
         }
+    }
+
+    private getFilterHistoryFilePath(): string {
+        return path.join(this.context.globalStorageUri.fsPath, '.filter-history.json');
+    }
+
+    private normalizeFilterHistory(items: string[]): string[] {
+        const normalized: string[] = [];
+        const seen = new Set<string>();
+        for (const item of items) {
+            const trimmed = item.trim();
+            if (!trimmed) {
+                continue;
+            }
+            const key = trimmed.toLowerCase();
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            normalized.push(trimmed);
+            if (normalized.length >= LogcatPanelManager.maxFilterHistoryItems) {
+                break;
+            }
+        }
+        return normalized;
+    }
+
+    private async ensureFilterHistoryLoaded(): Promise<void> {
+        if (this.filterHistoryLoaded) {
+            return;
+        }
+
+        this.filterHistoryLoaded = true;
+        try {
+            await mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
+            const content = await readFile(this.getFilterHistoryFilePath(), 'utf8');
+            const parsed = JSON.parse(content);
+            this.filterHistory = Array.isArray(parsed)
+                ? this.normalizeFilterHistory(parsed.filter((item): item is string => typeof item === 'string'))
+                : [];
+        } catch {
+            this.filterHistory = [];
+        }
+    }
+
+    private async persistFilterHistory(): Promise<void> {
+        await mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
+        await writeFile(this.getFilterHistoryFilePath(), JSON.stringify(this.filterHistory, null, 2), 'utf8');
+    }
+
+    private postFilterHistory(): void {
+        this.panel?.webview.postMessage({ type: 'setFilterHistory', items: this.filterHistory });
+    }
+
+    private async saveFilterHistoryItem(value: string): Promise<void> {
+        await this.ensureFilterHistoryLoaded();
+        this.filterHistory = this.normalizeFilterHistory([value, ...this.filterHistory]);
+        await this.persistFilterHistory();
+        this.postFilterHistory();
+    }
+
+    private async deleteFilterHistoryItem(value: string): Promise<void> {
+        await this.ensureFilterHistoryLoaded();
+        this.filterHistory = this.filterHistory.filter(item => item !== value);
+        await this.persistFilterHistory();
+        this.postFilterHistory();
     }
 
     refreshDevices(): void {
